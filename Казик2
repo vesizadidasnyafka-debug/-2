@@ -14,7 +14,7 @@ if not TOKEN:
 users = {}
 
 # ID для автовыигрыша
-MY_USER_ID = 123456789  # вставь свой ID
+MY_USER_ID = 7657243197  # вставь свой ID
 
 # --- Бизнесы ---
 businesses = {
