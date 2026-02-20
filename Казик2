@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ===== Твой токен и ID =====
-mport os
+import os
 TOKEN = os.getenv("BOT_TOKEN")
 MY_USER_ID = 7657243197
 
