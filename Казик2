@@ -46,9 +46,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     await update.message.reply_text(
         f"Привет! Баланс: {user['balance']}\n"
-        "Команды:\n"
-        "/daily - бонус 500 токенов\n"
-        "/balance - посмотреть баланс\n"
+        "Команды:"
+        "/daily - бонус 500 токенов"
+        "/balance - посмотреть баланс"
         "/bet easy|medium|hard|extreme red|black|green сумма\n"
         "/give user_id сумма - передать токены\n"
         "/buy business_name - купить бизнес\n"
