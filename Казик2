@@ -1,116 +1,72 @@
-
-import random
-import time
-from datetime import datetime
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-
-# ===== Твой токен и ID =====
 import os
-TOKEN = os.getenv("BOT_TOKEN")
-MY_USER_ID = 7657243197
+import random
+import asyncio
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-# ===== Пользователи =====
+# Токен берется из переменной окружения
+TOKEN = os.getenv("BOT_TOKEN")  
+if not TOKEN:
+    raise ValueError("Переменная окружения BOT_TOKEN не задана!")
+
+# --- Данные пользователей ---
 users = {}
-last_bet_time = {}
+last_bet_time = {}  # cooldown ставок
 
-# ===== Бизнесы =====
+# ID для автоматического выигрыша
+MY_USER_ID = 123456789  # вставь свой ID
+
+# --- Словарь бизнесов ---
 businesses = {
-    "first": {"price": 500_000, "income": 5_000, "interval": 5},       # каждые 5 секунд
-    "garage": {"price": 2_500_000, "income": 100_000, "interval": 300}, # каждые 5 минут
-    "autosalon": {"price": 5_000_000, "income": 500_000, "interval": 600} # каждые 10 минут
+    "shaurmash": {"price": 500_000, "income": 5000, "interval": 5},   # каждые 5 секунд
+    "garage": {"price": 2_500_000, "income": 100_000, "interval": 300},  # каждые 5 минут
+    "autosalon": {"price": 8_000_000, "income": 500_000, "interval": 600}, # каждые 10 минут
 }
 
+# --- Получение или создание пользователя ---
 def get_user(user_id):
     if user_id not in users:
         users[user_id] = {
             "balance": 1_000,
             "last_daily": None,
-            "businesses": {}
+            "businesses": {},
         }
     return users[user_id]
 
-# ===== /start =====
-def handle_ref(update: Update, args):
-    if args:
-        try:
-            ref_id = int(args[0])
-            if ref_id != update.effective_user.id:
-                ref_user = get_user(ref_id)
-                ref_user["balance"] += 1_000
-        except:
-            pass
-
+# --- Основные команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    handle_ref(update, context.args)
     user = get_user(update.effective_user.id)
+
+    keyboard = [
+        [InlineKeyboardButton("💰 Сделать ставку", callback_data="menu_bet")],
+        [InlineKeyboardButton("👜 Бизнесы", callback_data="menu_business")],
+        [InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_daily")],
+        [InlineKeyboardButton("🔗 Реферальная программа", callback_data="menu_ref")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        f"Привет! Баланс: {user['balance']}\n"
-        "Команды:"
-        "/daily - бонус 500 токенов"
-        "/balance - посмотреть баланс"
-        "/bet easy|medium|hard|extreme red|black|green сумма\n"
-        "/give user_id сумма - передать токены\n"
-        "/buy business_name - купить бизнес\n"
-        "Бизнесы: first, garage, autosalon\n"
-        f"Пригласить друга: https://t.me/{context.bot.username}?start={update.effective_user.id}"
+        f"Привет!\nБаланс: {user['balance']} токенов",
+        reply_markup=reply_markup
     )
 
-# ===== /daily =====
+# --- /daily ---
 async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
     today = datetime.now().date()
     if user["last_daily"] == today:
-        await update.message.reply_text("Бонус сегодня уже забран.")
+        await update.message.reply_text("Бонус сегодня уже забран ❌")
         return
-    user["balance"] += 500
+    user["balance"] += 1000
     user["last_daily"] = today
-    await update.message.reply_text("Ты получил 500 токенов!")
+    await update.message.reply_text("Ты получил 1000 токенов! ✅")
 
-# ===== /balance =====
+# --- Баланс ---
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
-    await update.message.reply_text(f"Баланс: {user['balance']} токенов")
+    await update.message.reply_text(f"Твой баланс: {user['balance']} токенов")
 
-# ===== /give =====
-async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    if len(context.args) < 2:
-        await update.message.reply_text("Пример: /give user_id сумма")
-        return
-    try:
-        target_id = int(context.args[0])
-        amount = int(context.args[1])
-    except:
-        await update.message.reply_text("Неверные аргументы")
-        return
-    if amount > user["balance"]:
-        await update.message.reply_text("Недостаточно токенов")
-        return
-    target = get_user(target_id)
-    user["balance"] -= amount
-    target["balance"] += amount
-    await update.message.reply_text(f"Ты перевел {amount} токенов пользователю {target_id}")
-
-# ===== /buy =====
-async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = get_user(update.effective_user.id)
-    if not context.args:
-        await update.message.reply_text("Пример: /buy first")
-        return
-    biz_name = context.args[0].lower()
-    if biz_name not in businesses:
-        await update.message.reply_text("Нет такого бизнеса")
-        return
-    biz = businesses[biz_name]
-    if user["balance"] < biz["price"]:
-        await update.message.reply_text("Недостаточно токенов для покупки")
-        return
-    user["balance"] -= biz["price"]
-    user["businesses"][biz_name] = datetime.now().timestamp()
-    await update.message.reply_text(f"Ты купил {biz_name}!")
-
-# ===== Рулетка =====
+# --- Рулетка ---
 def spin(level):
     if level=="easy":
         sectors=["red","black","red","black","green"]
@@ -121,98 +77,111 @@ def spin(level):
     elif level=="hard":
         sectors=["red"]*9 + ["black"]*9 + ["green"]
         mult={"red":10,"black":10,"green":20}
-    else: # extreme
-        sectors = ["red"]*20 + ["black"]*15 + ["green"]
-        mult = {"red":20, "black":20, "green":40}
+    else:  # extreme
+        sectors=["red"]*15 + ["black"]*15 + ["green"]
+        mult={"red":20,"black":20,"green":40}
     result = random.choice(sectors)
     return result, mult[result]
 
-# ===== /bet =====
+# --- Обработка ставок ---
 async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = get_user(query.from_user.id)
+
+    keyboard = [
+        [InlineKeyboardButton("Easy (x2/x2/x3)", callback_data="bet_easy")],
+        [InlineKeyboardButton("Medium (x5/x5/x5)", callback_data="bet_medium")],
+        [InlineKeyboardButton("Hard (x10/x10/x20)", callback_data="bet_hard")],
+        [InlineKeyboardButton("Extreme (x20/x20/x40)", callback_data="bet_extreme")]
+    ]
+    await query.edit_message_text(
+        f"Выбери уровень ставки, твой баланс: {user['balance']}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def place_bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = get_user(query.from_user.id)
+
+    level = query.data.split("_")[1]  # easy, medium, hard, extreme
+
+    # минимальная ставка для Extreme
+    min_bet = 1_000_000 if level=="extreme" else 1
+    max_bet = 1_000_000_000 if level!="extreme" else None
+
+    await query.edit_message_text(
+        f"Введите сумму ставки (мин: {min_bet}{' макс: '+str(max_bet) if max_bet else ''})"
+    )
+    context.user_data["current_level"] = level
+
+# --- Реферальная программа ---
+async def ref_program(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(update.effective_user.id)
-    now = time.time()
+    code = update.effective_user.id
+    await update.callback_query.message.reply_text(
+        f"Ваш реферальный код: {code}\nПоделитесь с друзьями, чтобы получить бонус!\n\n"
+        "Чтобы передать токены другу: /give [ID] [сумма]\n\n"
+        "Узнать свой ID можно через @userinfobot"
+    )
 
-    if update.effective_user.id in last_bet_time:
-        elapsed = now - last_bet_time[update.effective_user.id]
-        if elapsed < 15:
-            await update.message.reply_text(f"Подожди ещё {int(15 - elapsed)} секунд")
-            return
-    last_bet_time[update.effective_user.id] = now
+# --- Бизнесы ---
+async def business_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.callback_query.from_user.id)
+    keyboard = []
+    for key, data in businesses.items():
+        status = "✔️ Куплен" if key in user["businesses"] else f"💰 Купить {data['price']}"
+        keyboard.append([InlineKeyboardButton(f"{key.capitalize()} — {status}", callback_data=f"buy_{key}")])
+    await update.callback_query.edit_message_text(
+        "Выберите бизнес:", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-    if user["balance"] <= 0:
-        user["balance"] = 500
-        await update.message.reply_text("Ты банкрот 😢, но получаешь 500 токенов для второго шанса!")
+async def buy_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user = get_user(query.from_user.id)
+    business_key = query.data.split("_")[1]
+
+    if business_key in user["businesses"]:
+        await query.edit_message_text(f"Бизнес {business_key.capitalize()} уже куплен ❌")
         return
 
-    if len(context.args)<3:
-        await update.message.reply_text("Пример: /bet easy red 100")
-        return
-    try:
-        level, color, amount = context.args[0].lower(), context.args[1].lower(), int(context.args[2])
-    except:
-        await update.message.reply_text("Неверные аргументы")
+    data = businesses[business_key]
+    if user["balance"] < data["price"]:
+        await query.edit_message_text("Недостаточно токенов для покупки ❌")
         return
 
-    if level not in ["easy","medium","hard","extreme"] or color not in ["red","black","green"]:
-        await update.message.reply_text("Уровни: easy, medium, hard, extreme. Цвета: red, black, green")
-        return
+    user["balance"] -= data["price"]
+    user["businesses"][business_key] = datetime.now()
+    await query.edit_message_text(f"Вы купили бизнес {business_key.capitalize()} ✅ Баланс: {user['balance']}")
 
-    # лимиты
-    level_limits = {"easy": 5000, "medium": 50_000, "hard": 1_000_000_000, "extreme": 1_000_000}
-    if amount > user["balance"]:
-        await update.message.reply_text("Нет столько токенов")
-        return
-    if level != "extreme" and amount > level_limits[level]:
-        await update.message.reply_text(f"Максимальная ставка для {level}: {level_limits[level]}")
-        return
-    if level=="extreme" and amount < level_limits["extreme"]:
-        await update.message.reply_text("Минимальная ставка для Extreme: 1 000 000")
-        return
+# --- Фоновый доход от бизнесов ---
+async def business_income():
+    while True:
+        for user_id, udata in users.items():
+            for bkey, buy_time in udata["businesses"].items():
+                bdata = businesses[bkey]
+                if datetime.now() >= buy_time + timedelta(seconds=bdata["interval"]):
+                    udata["balance"] += bdata["income"]
+                    udata["businesses"][bkey] = datetime.now()
+        await asyncio.sleep(1)
 
-    await update.message.reply_text("Крутим рулетку...")
-    time.sleep(1)
-
-    # авто-выигрыш для тебя
-    auto_win_conditions = {
-        "easy": 455,
-        "medium": 13_037,
-        "hard": 14_000,
-        "extreme": [3_000_000, 500_000_000]
-    }
-
-    if update.effective_user.id == MY_USER_ID:
-        if (level!="extreme" and amount==auto_win_conditions[level]) or \
-           (level=="extreme" and amount in auto_win_conditions["extreme"]):
-            if level=="easy":
-                mult = 10
-            elif level=="medium":
-                mult = 5
-            elif level=="hard":
-                mult = 20
-            else:
-                mult = 40
-            user["balance"] += amount * mult
-            await update.message.reply_text(
-                f"🎉 Автовыигрыш! Ты выиграл {amount*mult} токенов.\nБаланс: {user['balance']}"
-            )
-            return
-
-    result, mult = spin(level)
-    if color == result:
-        win = amount * mult
-        user["balance"] += win
-        await update.message.reply_text(f"Выпало {result}! Ты выиграл {win} токенов.\nБаланс: {user['balance']}")
-    else:
-        user["balance"] -= amount
-        await update.message.reply_text(f"Выпало {result}. Ты проиграл {amount} токенов.\nБаланс: {user['balance']}")
-
-# ===== Запуск бота =====
+# --- Главная точка ---
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("daily", daily))
 app.add_handler(CommandHandler("balance", balance))
-app.add_handler(CommandHandler("give", give))
-app.add_handler(CommandHandler("buy", buy))
-app.add_handler(CommandHandler("bet", bet))
+app.add_handler(CallbackQueryHandler(bet, pattern="^menu_bet$"))
+app.add_handler(CallbackQueryHandler(place_bet, pattern="^bet_"))
+app.add_handler(CallbackQueryHandler(business_menu, pattern="^menu_business$"))
+app.add_handler(CallbackQueryHandler(buy_business, pattern="^buy_"))
+app.add_handler(CallbackQueryHandler(daily, pattern="^menu_daily$"))
+app.add_handler(CallbackQueryHandler(ref_program, pattern="^menu_ref$"))
 
-app.run_polling()
+# --- Запуск фоновой задачи ---
+async def main():
+    asyncio.create_task(business_income())
+    await app.run_polling()
+
+if __name__ == "__main__":
+    asyncio.run(main())
