@@ -1,0 +1,218 @@
+
+import random
+import time
+from datetime import datetime
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+# ===== Твой токен и ID =====
+mport os
+TOKEN = os.getenv("BOT_TOKEN")
+MY_USER_ID = 7657243197
+
+# ===== Пользователи =====
+users = {}
+last_bet_time = {}
+
+# ===== Бизнесы =====
+businesses = {
+    "first": {"price": 500_000, "income": 5_000, "interval": 5},       # каждые 5 секунд
+    "garage": {"price": 2_500_000, "income": 100_000, "interval": 300}, # каждые 5 минут
+    "autosalon": {"price": 5_000_000, "income": 500_000, "interval": 600} # каждые 10 минут
+}
+
+def get_user(user_id):
+    if user_id not in users:
+        users[user_id] = {
+            "balance": 1_000,
+            "last_daily": None,
+            "businesses": {}
+        }
+    return users[user_id]
+
+# ===== /start =====
+def handle_ref(update: Update, args):
+    if args:
+        try:
+            ref_id = int(args[0])
+            if ref_id != update.effective_user.id:
+                ref_user = get_user(ref_id)
+                ref_user["balance"] += 1_000
+        except:
+            pass
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    handle_ref(update, context.args)
+    user = get_user(update.effective_user.id)
+    await update.message.reply_text(
+        f"Привет! Баланс: {user['balance']}\n"
+        "Команды:\n"
+        "/daily - бонус 500 токенов\n"
+        "/balance - посмотреть баланс\n"
+        "/bet easy|medium|hard|extreme red|black|green сумма\n"
+        "/give user_id сумма - передать токены\n"
+        "/buy business_name - купить бизнес\n"
+        "Бизнесы: first, garage, autosalon\n"
+        f"Пригласить друга: https://t.me/{context.bot.username}?start={update.effective_user.id}"
+    )
+
+# ===== /daily =====
+async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    today = datetime.now().date()
+    if user["last_daily"] == today:
+        await update.message.reply_text("Бонус сегодня уже забран.")
+        return
+    user["balance"] += 500
+    user["last_daily"] = today
+    await update.message.reply_text("Ты получил 500 токенов!")
+
+# ===== /balance =====
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    await update.message.reply_text(f"Баланс: {user['balance']} токенов")
+
+# ===== /give =====
+async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    if len(context.args) < 2:
+        await update.message.reply_text("Пример: /give user_id сумма")
+        return
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except:
+        await update.message.reply_text("Неверные аргументы")
+        return
+    if amount > user["balance"]:
+        await update.message.reply_text("Недостаточно токенов")
+        return
+    target = get_user(target_id)
+    user["balance"] -= amount
+    target["balance"] += amount
+    await update.message.reply_text(f"Ты перевел {amount} токенов пользователю {target_id}")
+
+# ===== /buy =====
+async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    if not context.args:
+        await update.message.reply_text("Пример: /buy first")
+        return
+    biz_name = context.args[0].lower()
+    if biz_name not in businesses:
+        await update.message.reply_text("Нет такого бизнеса")
+        return
+    biz = businesses[biz_name]
+    if user["balance"] < biz["price"]:
+        await update.message.reply_text("Недостаточно токенов для покупки")
+        return
+    user["balance"] -= biz["price"]
+    user["businesses"][biz_name] = datetime.now().timestamp()
+    await update.message.reply_text(f"Ты купил {biz_name}!")
+
+# ===== Рулетка =====
+def spin(level):
+    if level=="easy":
+        sectors=["red","black","red","black","green"]
+        mult={"red":2,"black":2,"green":3}
+    elif level=="medium":
+        sectors=["red"]*5 + ["black"]*5 + ["green"]*11
+        mult={"red":5,"black":5,"green":5}
+    elif level=="hard":
+        sectors=["red"]*9 + ["black"]*9 + ["green"]
+        mult={"red":10,"black":10,"green":20}
+    else: # extreme
+        sectors = ["red"]*20 + ["black"]*15 + ["green"]
+        mult = {"red":20, "black":20, "green":40}
+    result = random.choice(sectors)
+    return result, mult[result]
+
+# ===== /bet =====
+async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    now = time.time()
+
+    if update.effective_user.id in last_bet_time:
+        elapsed = now - last_bet_time[update.effective_user.id]
+        if elapsed < 15:
+            await update.message.reply_text(f"Подожди ещё {int(15 - elapsed)} секунд")
+            return
+    last_bet_time[update.effective_user.id] = now
+
+    if user["balance"] <= 0:
+        user["balance"] = 500
+        await update.message.reply_text("Ты банкрот 😢, но получаешь 500 токенов для второго шанса!")
+        return
+
+    if len(context.args)<3:
+        await update.message.reply_text("Пример: /bet easy red 100")
+        return
+    try:
+        level, color, amount = context.args[0].lower(), context.args[1].lower(), int(context.args[2])
+    except:
+        await update.message.reply_text("Неверные аргументы")
+        return
+
+    if level not in ["easy","medium","hard","extreme"] or color not in ["red","black","green"]:
+        await update.message.reply_text("Уровни: easy, medium, hard, extreme. Цвета: red, black, green")
+        return
+
+    # лимиты
+    level_limits = {"easy": 5000, "medium": 50_000, "hard": 1_000_000_000, "extreme": 1_000_000}
+    if amount > user["balance"]:
+        await update.message.reply_text("Нет столько токенов")
+        return
+    if level != "extreme" and amount > level_limits[level]:
+        await update.message.reply_text(f"Максимальная ставка для {level}: {level_limits[level]}")
+        return
+    if level=="extreme" and amount < level_limits["extreme"]:
+        await update.message.reply_text("Минимальная ставка для Extreme: 1 000 000")
+        return
+
+    await update.message.reply_text("Крутим рулетку...")
+    time.sleep(1)
+
+    # авто-выигрыш для тебя
+    auto_win_conditions = {
+        "easy": 455,
+        "medium": 13_037,
+        "hard": 14_000,
+        "extreme": [3_000_000, 500_000_000]
+    }
+
+    if update.effective_user.id == MY_USER_ID:
+        if (level!="extreme" and amount==auto_win_conditions[level]) or \
+           (level=="extreme" and amount in auto_win_conditions["extreme"]):
+            if level=="easy":
+                mult = 10
+            elif level=="medium":
+                mult = 5
+            elif level=="hard":
+                mult = 20
+            else:
+                mult = 40
+            user["balance"] += amount * mult
+            await update.message.reply_text(
+                f"🎉 Автовыигрыш! Ты выиграл {amount*mult} токенов.\nБаланс: {user['balance']}"
+            )
+            return
+
+    result, mult = spin(level)
+    if color == result:
+        win = amount * mult
+        user["balance"] += win
+        await update.message.reply_text(f"Выпало {result}! Ты выиграл {win} токенов.\nБаланс: {user['balance']}")
+    else:
+        user["balance"] -= amount
+        await update.message.reply_text(f"Выпало {result}. Ты проиграл {amount} токенов.\nБаланс: {user['balance']}")
+
+# ===== Запуск бота =====
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("daily", daily))
+app.add_handler(CommandHandler("balance", balance))
+app.add_handler(CommandHandler("give", give))
+app.add_handler(CommandHandler("buy", buy))
+app.add_handler(CommandHandler("bet", bet))
+
+app.run_polling()
